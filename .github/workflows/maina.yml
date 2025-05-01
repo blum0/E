@@ -5,47 +5,53 @@ on: [push, workflow_dispatch]
 jobs:
   build:
     runs-on: windows-latest
-    timeout-minutes: 360  # أقصى وقت مسموح به (6 ساعات)
+    timeout-minutes: 360  # أقصى وقت (6 ساعات)
 
     steps:
-    - name: Download Ngrok
+    - name: تحميل ngrok
       run: Invoke-WebRequest https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip -OutFile ngrok.zip
 
-    - name: Extract Ngrok
+    - name: فك ضغط ngrok
       run: Expand-Archive ngrok.zip
 
-    - name: Auth Ngrok
+    - name: تسجيل الدخول إلى ngrok
       run: .\ngrok\ngrok.exe authtoken $Env:NGROK_AUTH_TOKEN
       env:
         NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
 
-    - name: Enable RDP
+    - name: تفعيل RDP
       run: |
         Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -Value 0
         Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
         Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -Value 1
         Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString -AsPlainText "P@ssw0rd!" -Force)
 
-    - name: Start RDP Tunnel
+    - name: بدء نفق RDP
       run: .\ngrok\ngrok.exe tcp 3389
 
-    - name: Download Godot
-      run: Invoke-WebRequest https://downloads.tuxfamily.org/godotengine/4.4.1/rc1/Godot_v4.4.1-rc1_win64.exe.zip -OutFile godot.zip
-
-    - name: Extract Godot
-      run: Expand-Archive godot.zip -DestinationPath .
-
-    - name: Setup Android SDK & JDK
+    - name: تثبيت Godot
       run: |
-        choco install -y android-sdk openjdk gradle
-        echo "ANDROID_HOME=C:\Program Files (x86)\Android\android-sdk" | Out-File -Append $env:GITHUB_ENV
-        echo "JAVA_HOME=C:\Program Files\OpenJDK\openjdk-17" | Out-File -Append $env:GITHUB_ENV
-        echo "PATH=$env:PATH;C:\Program Files (x86)\Android\android-sdk\platform-tools;C:\Program Files\OpenJDK\openjdk-17\bin" | Out-File -Append $env:GITHUB_ENV
+        Invoke-WebRequest https://downloads.tuxfamily.org/godotengine/4.4.1/rc1/Godot_v4.4.1-rc1_win64.exe.zip -OutFile godot.zip
+        Expand-Archive godot.zip -DestinationPath .
 
-    - name: Keep Alive (Workaround to avoid timeout)
+    - name: تثبيت Java 17
+      run: choco install -y openjdk17
+
+    - name: إعداد JAVA_HOME
+      run: |
+        setx JAVA_HOME "C:\Program Files\OpenJDK\openjdk-17"
+        setx PATH "%PATH%;C:\Program Files\OpenJDK\openjdk-17\bin"
+
+    - name: تثبيت Android SDK و Gradle
+      run: |
+        choco install -y android-sdk gradle
+        setx ANDROID_HOME "C:\Program Files (x86)\Android\android-sdk"
+        setx PATH "%PATH%;C:\Program Files (x86)\Android\android-sdk\platform-tools"
+
+    - name: إبقاء الجهاز نشط
       run: |
         for /L %%i in (1,1,43200) do (
-          echo Running... %%i
+          echo تشغيل... %%i
           timeout /t 60 >nul
         )
         
