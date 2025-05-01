@@ -5,53 +5,41 @@ on: [push, workflow_dispatch]
 jobs:
   build:
     runs-on: windows-latest
-    timeout-minutes: 360
 
     steps:
-    - name: تحميل ngrok
+    - name: Download ngrok
       run: Invoke-WebRequest https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip -OutFile ngrok.zip
 
-    - name: فك ضغط ngrok
+    - name: Extract ngrok
       run: Expand-Archive ngrok.zip
 
-    - name: تسجيل الدخول إلى ngrok
+    - name: Auth ngrok
       run: .\ngrok\ngrok.exe authtoken $Env:NGROK_AUTH_TOKEN
       env:
         NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
 
-    - name: تفعيل RDP
+    - name: Enable RDP
       run: |
         Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -Value 0
         Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
         Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -Value 1
         Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString -AsPlainText "P@ssw0rd!" -Force)
 
-    - name: بدء نفق RDP في الخلفية
-      run: Start-Process .\ngrok\ngrok.exe -ArgumentList "tcp 3389"
+    - name: Start RDP tunnel
+      run: .\ngrok\ngrok.exe tcp 3389
 
-    - name: تثبيت Godot
+    - name: Install Java 17
+      run: choco install openjdk17 -y
+
+    - name: Set JAVA_HOME
       run: |
-        Invoke-WebRequest https://downloads.tuxfamily.org/godotengine/4.4.1/rc1/Godot_v4.4.1-rc1_win64.exe.zip -OutFile godot.zip
-        Expand-Archive godot.zip -DestinationPath .
+        $Env:JAVA_HOME="C:\Program Files\Eclipse Adoptium\jdk-17.*"
+        [Environment]::SetEnvironmentVariable("JAVA_HOME", $Env:JAVA_HOME, [System.EnvironmentVariableTarget]::Machine)
+        [Environment]::SetEnvironmentVariable("PATH", $Env:PATH + ";$Env:JAVA_HOME\bin", [System.EnvironmentVariableTarget]::Machine)
 
-    - name: تثبيت Java 17
-      run: choco install -y openjdk17
+    - name: Install Android SDK & Command Line Tools
+      run: choco install android-sdk -y
 
-    - name: إعداد JAVA_HOME
-      run: |
-        setx JAVA_HOME "C:\Program Files\OpenJDK\openjdk-17"
-        setx PATH "%PATH%;C:\Program Files\OpenJDK\openjdk-17\bin"
-
-    - name: تثبيت Android SDK و Gradle
-      run: |
-        choco install -y android-sdk gradle
-        setx ANDROID_HOME "C:\Program Files (x86)\Android\android-sdk"
-        setx PATH "%PATH%;C:\Program Files (x86)\Android\android-sdk\platform-tools"
-
-    - name: إبقاء الجهاز نشط
-      run: |
-        for /L %%i in (1,1,43200) do (
-          echo تشغيل... %%i
-          timeout /t 60 >nul
-        )
-        
+    - name: Install Gradle
+      run: choco install gradle -y
+      
