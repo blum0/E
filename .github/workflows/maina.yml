@@ -5,7 +5,7 @@ on: [push, workflow_dispatch]
 jobs:
   build:
     runs-on: windows-latest
-    timeout-minutes: 360  # أقصى وقت (6 ساعات)
+    timeout-minutes: 360
 
     steps:
     - name: تحميل ngrok
@@ -26,8 +26,8 @@ jobs:
         Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -Value 1
         Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString -AsPlainText "P@ssw0rd!" -Force)
 
-    - name: بدء نفق RDP
-      run: .\ngrok\ngrok.exe tcp 3389
+    - name: بدء نفق RDP في الخلفية
+      run: Start-Process .\ngrok\ngrok.exe -ArgumentList "tcp 3389"
 
     - name: تثبيت Godot
       run: |
