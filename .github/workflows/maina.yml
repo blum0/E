@@ -1,47 +1,69 @@
-name: CI
+name: Godot Android Export RDP
 
-on: [push, workflow_dispatch]
+on: [workflow_dispatch]
 
 jobs:
-  build:
+  android-export:
     runs-on: windows-latest
 
     steps:
-    - name: Download ngrok
-      run: Invoke-WebRequest https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip -OutFile ngrok.zip
-
-    - name: Extract ngrok
-      run: Expand-Archive ngrok.zip
-
-    - name: Authenticate ngrok
-      run: .\ngrok\ngrok.exe authtoken $Env:NGROK_AUTH_TOKEN
-      env:
-        NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
-
-    - name: Enable RDP & Create User
+    # 1. إعداد RDP الأساسي
+    - name: Configure RDP
       run: |
-        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
+        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -Value 0
         Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 1
-        
-        $userExists = net user admin
-        if ($LASTEXITCODE -ne 0) {
-          net user admin 123123@@ /add
-        }
-        net localgroup administrators | findstr /C:"admin" > nul
-        if ($LASTEXITCODE -ne 0) {
-          net localgroup administrators admin /add
-        }
+        Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString "Android@Export123" -AsPlainText -Force)
 
-    - name: Start ngrok tunnel
-      run: Start-Process -NoNewWindow -FilePath .\ngrok\ngrok.exe -ArgumentList "tcp 3389"
-
-    - name: Show connection info
+    # 2. تثبيت Godot 4.4.1 RC1
+    - name: Install Godot
       run: |
-        Start-Sleep -Seconds 10
-        Invoke-WebRequest http://127.0.0.1:4040/api/tunnels | Out-File tunnel.json
-        Get-Content tunnel.json
+        Invoke-WebRequest "https://downloads.tuxfamily.org/godotengine/4.4.1/rc1/Godot_v4.4.1-rc1_mono_win64.zip" -OutFile godot.zip
+        Expand-Archive godot.zip -DestinationPath "C:\Godot"
+        Add-Content -Path $env:GITHUB_PATH -Value "C:\Godot"
 
-    - name: Keep session alive for 6 hours
-      run: Start-Sleep -Seconds 21600
-      
+    # 3. تثبيت JDK 17 (مطلوب لتصدير Android)
+    - name: Install JDK 17
+      uses: actions/setup-java@v3
+      with:
+        java-version: '17'
+        distribution: 'zulu'
+
+    # 4. تثبيت Android SDK + Gradle
+    - name: Install Android Tools
+      run: |
+        # تنزيل Android Command Line Tools
+        Invoke-WebRequest "https://dl.google.com/android/repository/commandlinetools-win-9477386_latest.zip" -OutFile android-tools.zip
+        Expand-Archive android-tools.zip -DestinationPath "$env:ANDROID_HOME"
+
+        # إعداد متغيرات البيئة
+        $androidPath = "$env:ANDROID_HOME\cmdline-tools\bin"
+        [Environment]::SetEnvironmentVariable("ANDROID_HOME", "$env:ANDROID_HOME", "Machine")
+        [Environment]::SetEnvironmentVariable("PATH", "$env:PATH;$androidPath", "Machine")
+        Add-Content -Path $env:GITHUB_PATH -Value $androidPath
+
+        # قبول تراخيص Android SDK
+        yes | sdkmanager --licenses
+
+        # تثبيت حزم Android الأساسية
+        sdkmanager "platform-tools" "platforms;android-33" "build-tools;34.0.0"
+
+    # 5. إعداد Ngrok للاتصال بـ RDP
+    - name: Setup Ngrok
+      run: |
+        Invoke-WebRequest https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip -OutFile ngrok.zip
+        Expand-Archive ngrok.zip
+        .\ngrok\ngrok.exe authtoken $Env:NGROK_TOKEN
+      env:
+        NGrok_TOKEN: ${{ secrets.NGROK_TOKEN }}
+
+    # 6. تشغيل الجلسة
+    - name: Start RDP Session
+      run: |
+        Start-Process -FilePath ".\ngrok\ngrok.exe" -ArgumentList "tcp 3389"
+        Write-Host "===================================="
+        Write-Host "معلومات الاتصال:"
+        Write-Host "1. عنوان Ngrok: (ابحث عن 'tcp://' في السجلات)"
+        Write-Host "2. المستخدم: runneradmin"
+        Write-Host "3. كلمة السر: Android@Export123"
+        Write-Host "===================================="
+        Start-Sleep -Seconds 21600 # 6 ساعات كحد أقصى
