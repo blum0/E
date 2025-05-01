@@ -1,69 +1,63 @@
-name: Godot Android Export RDP
+name: Godot RDP with Ngrok
 
 on: [workflow_dispatch]
 
 jobs:
-  android-export:
+  rdp-setup:
     runs-on: windows-latest
+    timeout-minutes: 360
 
     steps:
-    # 1. إعداد RDP الأساسي
     - name: Configure RDP
       run: |
-        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -Value 0
+        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
         Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-        Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString "Android@Export123" -AsPlainText -Force)
+        Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString "P@ssw0rd!" -AsPlainText -Force)
 
-    # 2. تثبيت Godot 4.4.1 RC1
-    - name: Install Godot
-      run: |
-        Invoke-WebRequest "https://downloads.tuxfamily.org/godotengine/4.4.1/rc1/Godot_v4.4.1-rc1_mono_win64.zip" -OutFile godot.zip
-        Expand-Archive godot.zip -DestinationPath "C:\Godot"
-        Add-Content -Path $env:GITHUB_PATH -Value "C:\Godot"
-
-    # 3. تثبيت JDK 17 (مطلوب لتصدير Android)
-    - name: Install JDK 17
-      uses: actions/setup-java@v3
-      with:
-        java-version: '17'
-        distribution: 'zulu'
-
-    # 4. تثبيت Android SDK + Gradle
-    - name: Install Android Tools
-      run: |
-        # تنزيل Android Command Line Tools
-        Invoke-WebRequest "https://dl.google.com/android/repository/commandlinetools-win-9477386_latest.zip" -OutFile android-tools.zip
-        Expand-Archive android-tools.zip -DestinationPath "$env:ANDROID_HOME"
-
-        # إعداد متغيرات البيئة
-        $androidPath = "$env:ANDROID_HOME\cmdline-tools\bin"
-        [Environment]::SetEnvironmentVariable("ANDROID_HOME", "$env:ANDROID_HOME", "Machine")
-        [Environment]::SetEnvironmentVariable("PATH", "$env:PATH;$androidPath", "Machine")
-        Add-Content -Path $env:GITHUB_PATH -Value $androidPath
-
-        # قبول تراخيص Android SDK
-        yes | sdkmanager --licenses
-
-        # تثبيت حزم Android الأساسية
-        sdkmanager "platform-tools" "platforms;android-33" "build-tools;34.0.0"
-
-    # 5. إعداد Ngrok للاتصال بـ RDP
-    - name: Setup Ngrok
+    - name: Install Ngrok
       run: |
         Invoke-WebRequest https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip -OutFile ngrok.zip
         Expand-Archive ngrok.zip
         .\ngrok\ngrok.exe authtoken $Env:NGROK_TOKEN
       env:
-        NGrok_TOKEN: ${{ secrets.NGROK_TOKEN }}
+        NGROK_TOKEN: ${{ secrets.NGROK_TOKEN }}
 
-    # 6. تشغيل الجلسة
-    - name: Start RDP Session
+    - name: Start Ngrok and Fetch Tunnel Info
       run: |
-        Start-Process -FilePath ".\ngrok\ngrok.exe" -ArgumentList "tcp 3389"
-        Write-Host "===================================="
-        Write-Host "معلومات الاتصال:"
-        Write-Host "1. عنوان Ngrok: (ابحث عن 'tcp://' في السجلات)"
-        Write-Host "2. المستخدم: runneradmin"
-        Write-Host "3. كلمة السر: Android@Export123"
-        Write-Host "===================================="
-        Start-Sleep -Seconds 21600 # 6 ساعات كحد أقصى
+        # تشغيل Ngrok في الخلفية
+        $ngrokProcess = Start-Process -FilePath ".\ngrok\ngrok.exe" -ArgumentList "tcp 3389" -PassThru
+        
+        # الانتظار حتى يصبح Ngrok جاهزًا (حتى 30 ثانية)
+        $attempts = 0
+        $maxAttempts = 30
+        $tunnelReady = $false
+        
+        while ($attempts -lt $maxAttempts -and !$tunnelReady) {
+          try {
+            $response = Invoke-WebRequest "http://localhost:4040/api/tunnels" -ErrorAction Stop
+            $tunnelInfo = $response.Content | ConvertFrom-Json
+            $publicUrl = $tunnelInfo.tunnels[0].public_url
+            Write-Host "Ngrok Tunnel URL: $publicUrl"
+            $tunnelReady = $true
+          } catch {
+            Write-Host "Waiting for Ngrok to start... (Attempt $($attempts + 1)/$maxAttempts)"
+            Start-Sleep -Seconds 1
+            $attempts++
+          }
+        }
+
+        if (!$tunnelReady) {
+          Write-Host "Failed to get Ngrok tunnel after $maxAttempts attempts"
+          exit 1
+        }
+
+        # عرض معلومات الاتصال
+        Write-Host "========================================"
+        Write-Host "RDP Connection Details:"
+        Write-Host "URL: $publicUrl"
+        Write-Host "Username: runneradmin"
+        Write-Host "Password: P@ssw0rd!"
+        Write-Host "========================================"
+
+        # الحفاظ على الجلسة نشطة
+        Wait-Process -Id $ngrokProcess.Id
