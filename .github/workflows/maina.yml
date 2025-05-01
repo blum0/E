@@ -1,63 +1,51 @@
-name: Godot RDP with Ngrok
+name: CI
 
-on: [workflow_dispatch]
+on: [push, workflow_dispatch]
 
 jobs:
-  rdp-setup:
+  build:
     runs-on: windows-latest
-    timeout-minutes: 360
+    timeout-minutes: 360  # أقصى وقت مسموح به (6 ساعات)
 
     steps:
-    - name: Configure RDP
-      run: |
-        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
-        Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-        Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString "P@ssw0rd!" -AsPlainText -Force)
+    - name: Download Ngrok
+      run: Invoke-WebRequest https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip -OutFile ngrok.zip
 
-    - name: Install Ngrok
-      run: |
-        Invoke-WebRequest https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip -OutFile ngrok.zip
-        Expand-Archive ngrok.zip
-        .\ngrok\ngrok.exe authtoken $Env:NGROK_TOKEN
+    - name: Extract Ngrok
+      run: Expand-Archive ngrok.zip
+
+    - name: Auth Ngrok
+      run: .\ngrok\ngrok.exe authtoken $Env:NGROK_AUTH_TOKEN
       env:
-        NGROK_TOKEN: ${{ secrets.NGROK_TOKEN }}
+        NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
 
-    - name: Start Ngrok and Fetch Tunnel Info
+    - name: Enable RDP
       run: |
-        # تشغيل Ngrok في الخلفية
-        $ngrokProcess = Start-Process -FilePath ".\ngrok\ngrok.exe" -ArgumentList "tcp 3389" -PassThru
+        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -Value 0
+        Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -Value 1
+        Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString -AsPlainText "P@ssw0rd!" -Force)
+
+    - name: Start RDP Tunnel
+      run: .\ngrok\ngrok.exe tcp 3389
+
+    - name: Download Godot
+      run: Invoke-WebRequest https://downloads.tuxfamily.org/godotengine/4.4.1/rc1/Godot_v4.4.1-rc1_win64.exe.zip -OutFile godot.zip
+
+    - name: Extract Godot
+      run: Expand-Archive godot.zip -DestinationPath .
+
+    - name: Setup Android SDK & JDK
+      run: |
+        choco install -y android-sdk openjdk gradle
+        echo "ANDROID_HOME=C:\Program Files (x86)\Android\android-sdk" | Out-File -Append $env:GITHUB_ENV
+        echo "JAVA_HOME=C:\Program Files\OpenJDK\openjdk-17" | Out-File -Append $env:GITHUB_ENV
+        echo "PATH=$env:PATH;C:\Program Files (x86)\Android\android-sdk\platform-tools;C:\Program Files\OpenJDK\openjdk-17\bin" | Out-File -Append $env:GITHUB_ENV
+
+    - name: Keep Alive (Workaround to avoid timeout)
+      run: |
+        for /L %%i in (1,1,43200) do (
+          echo Running... %%i
+          timeout /t 60 >nul
+        )
         
-        # الانتظار حتى يصبح Ngrok جاهزًا (حتى 30 ثانية)
-        $attempts = 0
-        $maxAttempts = 30
-        $tunnelReady = $false
-        
-        while ($attempts -lt $maxAttempts -and !$tunnelReady) {
-          try {
-            $response = Invoke-WebRequest "http://localhost:4040/api/tunnels" -ErrorAction Stop
-            $tunnelInfo = $response.Content | ConvertFrom-Json
-            $publicUrl = $tunnelInfo.tunnels[0].public_url
-            Write-Host "Ngrok Tunnel URL: $publicUrl"
-            $tunnelReady = $true
-          } catch {
-            Write-Host "Waiting for Ngrok to start... (Attempt $($attempts + 1)/$maxAttempts)"
-            Start-Sleep -Seconds 1
-            $attempts++
-          }
-        }
-
-        if (!$tunnelReady) {
-          Write-Host "Failed to get Ngrok tunnel after $maxAttempts attempts"
-          exit 1
-        }
-
-        # عرض معلومات الاتصال
-        Write-Host "========================================"
-        Write-Host "RDP Connection Details:"
-        Write-Host "URL: $publicUrl"
-        Write-Host "Username: runneradmin"
-        Write-Host "Password: P@ssw0rd!"
-        Write-Host "========================================"
-
-        # الحفاظ على الجلسة نشطة
-        Wait-Process -Id $ngrokProcess.Id
