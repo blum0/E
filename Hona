@@ -1,0 +1,53 @@
+name: CI
+
+on: [push, workflow_dispatch]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 360  # مدة التشغيل القصوى = 6 ساعات
+
+    steps:
+    - name: Download ngrok
+      run: Invoke-WebRequest https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip -OutFile ngrok.zip
+
+    - name: Extract ngrok
+      run: Expand-Archive ngrok.zip
+
+    - name: Auth ngrok
+      run: .\ngrok\ngrok.exe authtoken $Env:NGROK_AUTH_TOKEN
+      env:
+        NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
+
+    - name: Enable RDP
+      run: |
+        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -Value 0
+        Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -Value 1
+        Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString -AsPlainText "P@ssw0rd!" -Force)
+
+    - name: Start RDP tunnel in background
+      run: Start-Process .\ngrok\ngrok.exe -ArgumentList "tcp 3389"
+
+    - name: Install Java 17
+      run: choco install openjdk17 -y
+
+    - name: Set JAVA_HOME
+      run: |
+        $Env:JAVA_HOME="C:\Program Files\Eclipse Adoptium\jdk-17"
+        [Environment]::SetEnvironmentVariable("JAVA_HOME", $Env:JAVA_HOME, [System.EnvironmentVariableTarget]::Machine)
+        [Environment]::SetEnvironmentVariable("PATH", $Env:PATH + ";$Env:JAVA_HOME\bin", [System.EnvironmentVariableTarget]::Machine)
+
+    - name: Install Android SDK
+      run: choco install android-sdk -y
+
+    - name: Install Gradle
+      run: choco install gradle -y
+
+    - name: Keep session alive
+      run: |
+        for ($i = 1; $i -le 360; $i++) {
+          Write-Host "Session Active $i"
+          Start-Sleep -Seconds 60
+        }
+        
