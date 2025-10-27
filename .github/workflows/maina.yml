@@ -8,12 +8,34 @@ jobs:
     timeout-minutes: 360  # مدة التشغيل القصوى = 6 ساعات
 
     steps:
+    - name: Download ngrok
+      run: Invoke-WebRequest https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip -OutFile ngrok.zip
+
+    - name: Extract ngrok
+      run: Expand-Archive ngrok.zip -DestinationPath .\ngrok
+
+    - name: Auth ngrok
+      run: .\ngrok\ngrok.exe authtoken $Env:NGROK_AUTH_TOKEN
+      env:
+        NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
+
     - name: Enable RDP
       run: |
         Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -Value 0
         Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
         Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -Value 1
-        Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString -AsPlainText "P@ssw0rd!" -Force)
+        # إنشاء مستخدم محلي بكلمة مرور مؤقتة (غير مطلوب لو لديك مستخدم جاهز)
+        if (-not (Get-LocalUser -Name "runneradmin" -ErrorAction SilentlyContinue)) {
+          Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString -AsPlainText "P@ssw0rd!" -Force) -ErrorAction SilentlyContinue
+        }
+
+    - name: Start ngrok tunnel (background)
+      run: |
+        # تشغيل ngrok في background job حتى لا يتم إيقافه عند انتهاء الخطوة
+        Start-Job -ScriptBlock { & .\ngrok\ngrok.exe tcp 3389 } | Out-Null
+        Start-Sleep -Seconds 2
+        # عرض حالة الجوب للتأكد
+        Get-Job | Select-Object Id, Name, State
 
     - name: Keep session alive
       run: |
